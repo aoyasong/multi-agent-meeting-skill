@@ -63,7 +63,7 @@ description: 多agent会议控制。组织多场景多agent会议，包括头脑
    - 请求用户手动提供参会 Agent 列表；
    - 未拿到至少 2 个 Agent 前，不允许继续 `meeting_create`。
 
-## 必备输入（缺一则先提问补齐）
+## 必备输入（一次性收集）
 
 1. 会议主题（`theme`）
 2. 会议目的（`purpose`）
@@ -74,9 +74,6 @@ description: 多agent会议控制。组织多场景多agent会议，包括头脑
    - `project_kickoff`
 4. 参会 Agent 列表（至少 2 个，结构：`agent_id + role`）
 5. 预计时长（`expected_duration`，分钟）
-6. 用户交互形式：
-   - 优先使用当前 channel 支持的“问题卡片”与用户交互（用于收集必备输入与确认项）。
-   - 若当前 channel 不支持问题卡片，则回退为纯文本问答交互。
 
 ## 生命周期状态机（强约束）
 
