@@ -21,6 +21,18 @@ description: "使用 multi-agent-meeting-plugin 组织多Agent会议。用户要
 - “做头脑风暴 / 需求评审 / 技术评审 / 项目启动会”
 - “让多个 Agent 协同讨论并产出结论/任务”
 
+## 会前 Agent 列表获取（新增强制步骤）
+
+在向用户确认参会人之前，主 agent 必须先查询可用 Agent 清单：
+
+1. 调用 OpenClaw 运行时中的“Agent 列表查询工具”（工具名以当前运行环境为准）。
+2. 获取 `agent_id`、名称、能力标签、在线状态（若有）。
+3. 将可选 Agent 列表展示给用户，让用户勾选本次参会 Agent（至少 2 个）。
+4. 若环境中没有可用的 Agent 列表查询工具：
+   - 明确告知用户当前无法自动发现 Agent；
+   - 请求用户手动提供参会 Agent 列表；
+   - 未拿到至少 2 个 Agent 前，不允许继续 `meeting_create`。
+
 ## 必备输入（缺一则先提问补齐）
 
 1. 会议主题（`theme`）
@@ -32,6 +44,9 @@ description: "使用 multi-agent-meeting-plugin 组织多Agent会议。用户要
    - `project_kickoff`
 4. 参会 Agent 列表（至少 2 个，结构：`agent_id + role`）
 5. 预计时长（`expected_duration`，分钟）
+6. 用户交互形式：
+   - 优先使用当前 channel 支持的“问题卡片”与用户交互（用于收集必备输入与确认项）。
+   - 若当前 channel 不支持问题卡片，则回退为纯文本问答交互。
 
 ## 生命周期状态机（强约束）
 
@@ -51,6 +66,7 @@ description: "使用 multi-agent-meeting-plugin 组织多Agent会议。用户要
 - 不做“同主题防重复开会”拦截。
 - 允许同主题会议多次创建，通过 `meeting_id` 天然区分不同会议实例。
 - 如需更强可读性，可在主题后追加序号（例如：`支付重构评审-第2次`）。
+- 先完成“可用 Agent 列表查询 -> 用户勾选参会人”，再进入会议创建。
 
 ### 1) 创建会议
 
@@ -234,6 +250,49 @@ description: "使用 multi-agent-meeting-plugin 组织多Agent会议。用户要
 - 门1.5（会前）：议程草案确认与可修改（顺序/增删/时长/描述）。
 - 门2（会中）：平票、无共识、重大取舍时请求用户裁决。
 - 门3（会后）：最终产出确认后再发布执行。
+
+### 节点0：参会 Agent 候选生成模板（先查再选）
+
+```text
+[系统角色]
+你是会前编排助手。你将基于“可用 Agent 列表查询结果”为用户生成参会候选建议，仅输出 JSON。
+
+[输入]
+{
+  "available_agents":[
+    {
+      "agent_id":"string",
+      "name":"string",
+      "capabilities":["string"],
+      "status":"online|offline|busy|unknown"
+    }
+  ],
+  "meeting_intent":{
+    "theme":"string",
+    "purpose":"string",
+    "type":"brainstorm|requirement_review|tech_review|project_kickoff"
+  }
+}
+
+[输出JSON Schema]
+{
+  "recommended_participants":[
+    {
+      "agent_id":"string",
+      "suggested_role":"host|participant|observer",
+      "reason":"string"
+    }
+  ],
+  "must_have_roles":["host","participant"],
+  "need_user_confirmation": true,
+  "confirmation_message":"string"
+}
+
+[硬约束]
+- 参会建议至少 2 个 Agent。
+- 只可使用 available_agents 中存在的 agent_id。
+- 本节点只给“候选建议”，最终名单必须由用户确认。
+```
 
 ### 节点1：议程生成模板
 
