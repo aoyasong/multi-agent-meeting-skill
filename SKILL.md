@@ -25,10 +25,10 @@ description: "使用 multi-agent-meeting-plugin 组织多Agent会议。用户要
 
 在向用户确认参会人之前，主 agent 必须先查询可用 Agent 清单：
 
-1. 调用 OpenClaw 运行时中的“Agent 列表查询工具”（工具名以当前运行环境为准）。
+1. 调用插件工具 `agent_list_available` 获取可用 Agent 列表。
 2. 获取 `agent_id`、名称、能力标签、在线状态（若有）。
 3. 将可选 Agent 列表展示给用户，让用户勾选本次参会 Agent（至少 2 个）。
-4. 若环境中没有可用的 Agent 列表查询工具：
+4. 若 `agent_list_available` 调用失败：
    - 明确告知用户当前无法自动发现 Agent；
    - 请求用户手动提供参会 Agent 列表；
    - 未拿到至少 2 个 Agent 前，不允许继续 `meeting_create`。
@@ -66,7 +66,7 @@ description: "使用 multi-agent-meeting-plugin 组织多Agent会议。用户要
 - 不做“同主题防重复开会”拦截。
 - 允许同主题会议多次创建，通过 `meeting_id` 天然区分不同会议实例。
 - 如需更强可读性，可在主题后追加序号（例如：`支付重构评审-第2次`）。
-- 先完成“可用 Agent 列表查询 -> 用户勾选参会人”，再进入会议创建。
+- 先调用 `agent_list_available` -> 用户勾选参会人，再进入会议创建。
 
 ### 1) 创建会议
 
@@ -96,7 +96,23 @@ description: "使用 multi-agent-meeting-plugin 组织多Agent会议。用户要
   - 修改单个议题时长与描述
 - 每次修改后，主 agent 重新展示最新议程，直到用户明确回复“确认开始”。
 
-确认后调用 `meeting_start` 启动会议。
+### 2.2) agenda confirm 调用规范（强制）
+
+- 触发时机：在“最后一次议程变更”之后、`meeting_start` 之前，必须调用 `agenda_confirm`。
+- 调用工具：`agenda_confirm`（参数：`meeting_id`）。
+- 启动前校验：主 agent 必须检查 `agenda_confirm` 返回里 `agenda_confirmed=true`，否则禁止调用 `meeting_start`。
+- 启动动作：仅在确认成功后先调用 `meeting_start_readiness`，`can_start=true` 时再调用 `meeting_start`。
+
+### 2.3) confirm 失效规则（必须重确认）
+
+以下任一工具调用后，都会使议程确认失效，必须再次执行 `agenda_confirm`：
+
+- `agenda_add_item`
+- `agenda_update_item`
+- `agenda_remove_item`
+- `agenda_reorder_items`
+
+确认后调用 `meeting_start` 启动会议（若中间无议程变更）。
 
 ### 3) 议程循环（每个议题都执行）
 
@@ -259,6 +275,7 @@ description: "使用 multi-agent-meeting-plugin 组织多Agent会议。用户要
 
 [输入]
 {
+  "agent_list_source_tool":"agent_list_available",
   "available_agents":[
     {
       "agent_id":"string",
