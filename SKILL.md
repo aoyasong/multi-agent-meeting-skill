@@ -31,6 +31,40 @@ description: 多agent会议控制。组织多场景多agent会议，包括头脑
 3. 仅当当前 channel 不支持问题卡片时，才允许回退纯文本问答。
 4. 必备输入未收集完成前，禁止调用 `meeting_create`。
 5. 议程未最终确认并执行 `agenda_confirm` 前，禁止调用 `meeting_start`。
+6. 会议执行过程中，每个阶段成功后都必须向用户发送一次进展通知。
+
+## 阶段进展通知规范（强制）
+
+### 通知原则
+
+- 每个阶段性成功都要通知，不允许只在开头/结尾通知。
+- 通知内容简短、可追踪、可执行。
+- 若当前 channel 支持卡片，可用卡片展示进展；否则使用纯文本。
+
+### 必报节点（至少一次）
+
+1. 已完成会前 Agent 列表获取。
+2. 已完成必备输入收集。
+3. `meeting_create` 成功（给出 `meeting_id`）。
+4. 议程草案生成完成（给出议题数）。
+5. 议程用户确认完成并 `agenda_confirm` 成功。
+6. `meeting_start_readiness` 通过（`can_start=true`）。
+7. `meeting_start` 成功（进入进行中）。
+8. 每个议题完成时通知一次（当前议题 -> 下一议题）。
+9. 每次投票完成后通知一次（结果摘要）。
+10. 任务分配完成（任务数与负责人覆盖情况）。
+11. 会后产出完成（summary/actions/export）。
+12. `meeting_end` 成功（会议闭环完成）。
+
+### 标准通知模板
+
+- 文本模板：`[会议进展] <阶段名称> 已完成 | meeting_id=<ID> | 当前状态=<status> | 下一步=<next_step>`
+- 卡片模板字段：`阶段名称`、`meeting_id`、`当前状态`、`关键结果`、`下一步`
+
+### 异常规则
+
+- 任一阶段失败时，先发“失败通知”，再给“恢复动作”，格式：
+  - `[会议进展] <阶段名称> 失败 | error_code=<code> | 建议动作=<required_action>`
 
 ## 交互模式决策（问题卡片优先）
 
@@ -43,6 +77,37 @@ description: 多agent会议控制。组织多场景多agent会议，包括头脑
 
 - `interaction_mode`: `card` 或 `text`
 - `interaction_reason`: 为什么使用当前交互模式
+
+## 调用边界（CLI vs 插件工具，必须遵守）
+
+### CLI only（仅允许 CLI）
+
+- `openclaw agents list`：用于会前查询已配置 Agent 列表。
+
+### Plugin tools only（仅允许插件工具）
+
+以下动作必须调用 `multi-agent-meeting-plugin` 工具，严禁用 CLI 代替：
+
+- 会议生命周期：`meeting_create`、`meeting_start_readiness`、`meeting_start`、`meeting_end`、`meeting_get`、`meeting_list`
+- 议程管理：`agenda_add_item`、`agenda_update_item`、`agenda_remove_item`、`agenda_reorder_items`、`agenda_confirm`、`agenda_list_items`、`agenda_next_item`
+- 发言协调：`speaking_request`、`speaking_grant`、`speaking_release`、`speaking_status`
+- 投票决策：`voting_create`、`voting_cast`、`voting_get_result`、`voting_end`、`voting_override`
+- 会议记录：`recording_take_note`、`recording_tag_insight`、`recording_get_transcript`
+- 会议产出：`output_generate_summary`、`output_generate_action_items`、`output_export`
+- 任务管理：`meeting_assign_task`、`meeting_record_task_result`、`meeting_get_task`、`meeting_list_tasks`、`meeting_update_task_status`
+
+### 禁止项
+
+- 禁止把插件工具误当成 CLI 子命令（例如：`openclaw meeting ...`、`openclaw agenda_confirm ...`）。
+- 禁止在插件工具可用时，绕过插件工具直接编造会议状态或确认结果。
+
+### 失败回退策略
+
+若插件工具调用失败或提示工具不可见：
+
+1. 明确告知“当前是插件工具不可用/未暴露问题”，不要误导成 CLI 问题。
+2. 指引执行检查：`openclaw plugins inspect multi-agent-meeting-plugin`、重启 Gateway、重开会话。
+3. 在工具恢复前，仅允许继续执行 `openclaw agents list` 与纯文本信息收集，不得推进会议状态。
 
 ## 首轮响应模板（固定）
 
