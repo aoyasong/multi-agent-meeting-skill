@@ -1,9 +1,9 @@
 ---
-name: "multi-system-meeting-orchestrator"
-description: "使用 multi-agent-meeting-plugin 组织多Agent会议。用户要求开会/评审/头脑风暴/项目启动且需全流程闭环时触发。"
+name: multi-system-meeting-orchestrator
+description: 多agent会议控制。组织多场景多agent会议，包括头脑风暴、需求评审、技术评审、项目启动等。强大的会议编排能力，确保会议按计划进行。
 ---
 
-# 多场景会议总控 Skill（OpenClaw）
+# Multi System Meeting
 
 ## 目标
 
@@ -20,6 +20,36 @@ description: "使用 multi-agent-meeting-plugin 组织多Agent会议。用户要
 - “帮我开会 / 组织一次多 Agent 会议”
 - “做头脑风暴 / 需求评审 / 技术评审 / 项目启动会”
 - “让多个 Agent 协同讨论并产出结论/任务”
+- “组织开个头脑风暴的会议”
+
+## MUST-FIRST（强制执行）
+
+以下规则为最高优先级，命中触发条件后立即执行：
+
+1. 立即进入“会议编排模式”，不得先走普通闲聊流程。
+2. 首轮交互必须先尝试“问题卡片”收集必备输入。
+3. 仅当当前 channel 不支持问题卡片时，才允许回退纯文本问答。
+4. 必备输入未收集完成前，禁止调用 `meeting_create`。
+5. 议程未最终确认并执行 `agenda_confirm` 前，禁止调用 `meeting_start`。
+
+## 交互模式决策（问题卡片优先）
+
+执行分支：
+
+- `if channel_supports_card == true`：使用问题卡片收集与确认。
+- `else`：使用纯文本问答收集与确认。
+
+无论哪种分支，主 agent 都必须在上下文显式记录：
+
+- `interaction_mode`: `card` 或 `text`
+- `interaction_reason`: 为什么使用当前交互模式
+
+## 首轮响应模板（固定）
+
+命中触发条件后的第一条响应必须使用下列模板之一：
+
+- 卡片模式：`已进入会议编排模式，我先用问题卡片收集会议输入。`
+- 文本模式：`已进入会议编排模式；当前频道不支持问题卡片，改用纯文本收集输入。`
 
 ## 会前 Agent 列表获取（新增强制步骤）
 
