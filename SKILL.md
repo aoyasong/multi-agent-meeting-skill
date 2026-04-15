@@ -25,10 +25,10 @@ description: "使用 multi-agent-meeting-plugin 组织多Agent会议。用户要
 
 在向用户确认参会人之前，主 agent 必须先查询可用 Agent 清单：
 
-1. 调用插件工具 `agent_list_available` 获取可用 Agent 列表。
+1. 在会前执行 CLI：`openclaw agents list` 获取已配置 Agent 列表。
 2. 获取 `agent_id`、名称、能力标签、在线状态（若有）。
 3. 将可选 Agent 列表展示给用户，让用户勾选本次参会 Agent（至少 2 个）。
-4. 若 `agent_list_available` 调用失败：
+4. 若当前环境无法执行或无法读取 CLI 输出：
    - 明确告知用户当前无法自动发现 Agent；
    - 请求用户手动提供参会 Agent 列表；
    - 未拿到至少 2 个 Agent 前，不允许继续 `meeting_create`。
@@ -66,7 +66,7 @@ description: "使用 multi-agent-meeting-plugin 组织多Agent会议。用户要
 - 不做“同主题防重复开会”拦截。
 - 允许同主题会议多次创建，通过 `meeting_id` 天然区分不同会议实例。
 - 如需更强可读性，可在主题后追加序号（例如：`支付重构评审-第2次`）。
-- 先调用 `agent_list_available` -> 用户勾选参会人，再进入会议创建。
+- 先执行 `openclaw agents list` -> 用户勾选参会人，再进入会议创建。
 
 ### 1) 创建会议
 
@@ -275,7 +275,7 @@ description: "使用 multi-agent-meeting-plugin 组织多Agent会议。用户要
 
 [输入]
 {
-  "agent_list_source_tool":"agent_list_available",
+  "agent_list_source":"openclaw agents list",
   "available_agents":[
     {
       "agent_id":"string",
