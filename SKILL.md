@@ -1,168 +1,174 @@
----
+﻿---
 name: multi-system-meeting-orchestrator
-description: 多agent会议控制。组织多场景多agent会议，包括头脑风暴、需求评审、技术评审、项目启动等。强大的会议编排能力，确保会议按计划进行。
+description: 多agent会议控制Skill。命中开会/头脑风暴/评审/项目启动意图时立即触发，按强约束流程编排会议。主数据使用PostgreSQL，导出文件使用storageDir。
 ---
 
 # Multi System Meeting
 
-## 目标
+## 1. 目标
 
-在 OpenClaw 中基于插件 `multi-agent-meeting-plugin` 完整编排一次多 Agent 会议，确保：
+在 OpenClaw 中基于插件 `multi-agent-meeting-plugin` 编排一次多 Agent 会议，保证：
 
-- 覆盖会议全生命周期（创建 -> 启动 -> 议程推进 -> 讨论/投票 -> 产出 -> 结束）。
-- 支持四类核心场景（头脑风暴、需求评审、技术评审、项目启动）。
-- 有明确门禁、异常分支、重试与收敛条件，避免会议“挂起”。
+- 流程可执行：创建 -> 议程 -> 确认 -> 启动 -> 讨论/投票 -> 任务 -> 产出 -> 结束。
+- 约束可落地：工具边界清晰、门禁明确、异常可恢复。
+- 结果可交付：最终产出 summary、action items、导出文件路径。
 
-## 触发条件
+## 2. 执行主体约定（强制）
 
-当用户出现以下意图时立即触发本 Skill：
+- 主 agent：唯一流程控制者，负责调用插件工具和推进会议状态。
+- 其他 agent：仅参与讨论和任务执行，不直接推进会议状态。
+- 人类用户：负责确认关键输入、关键决策、关键结果。
 
-- “帮我开会 / 组织一次多 Agent 会议”
-- “做头脑风暴 / 需求评审 / 技术评审 / 项目启动会”
-- “让多个 Agent 协同讨论并产出结论/任务”
-- “组织开个头脑风暴的会议”
+### 2.1 命令执行边界（必须遵守）
 
-## MUST-FIRST（强制执行）
+- 终端 CLI（人类在终端执行）：`openclaw ...`
+- 插件工具（主 agent 通过工具调用执行）：`meeting_*`、`agenda_*`、`speaking_*`、`voting_*`、`recording_*`、`output_*`
+- 禁止：主 agent 在对话中假装已执行 CLI 并返回结果。
 
-以下规则为最高优先级，命中触发条件后立即执行：
+## 3. 存储口径（必须一致）
 
-1. 立即进入“会议编排模式”，不得先走普通闲聊流程。
-2. 首轮交互必须先尝试“问题卡片”收集必备输入。
-3. 仅当当前 channel 不支持问题卡片时，才允许回退纯文本问答。
-4. 必备输入未收集完成前，禁止调用 `meeting_create`。
-5. 议程未最终确认并执行 `agenda_confirm` 前，禁止调用 `meeting_start`。
-6. 会议执行过程中，每个阶段成功后都必须向用户发送一次进展通知。
+- 主数据（会议状态、议程、投票、任务索引）：PostgreSQL。
+- 连接来源：`pgDsn`（插件配置）或 `PG_DSN`（环境变量）。
+- 导出目录：`storageDir`（summary/actions/transcript 等文件产物）。
+- 禁止把导出目录文件当作会议主状态来源；主状态以工具查询结果为准。
 
-## 阶段进展通知规范（强制）
+## 4. 触发条件
 
-### 通知原则
+命中以下任一意图，立即触发本 Skill：
 
-- 每个阶段性成功都要通知，不允许只在开头/结尾通知。
-- 通知内容简短、可追踪、可执行。
-- 若当前 channel 支持卡片，可用卡片展示进展；否则使用纯文本。
+- 帮我开会 / 组织一次多 Agent 会议
+- 做头脑风暴 / 需求评审 / 技术评审 / 项目启动会
+- 让多个 Agent 协同讨论并产出结论/任务
 
-### 必报节点（至少一次）
+## 5. MUST-FIRST（最高优先级）
 
-1. 已完成会前 Agent 列表获取。
-2. 已完成必备输入收集。
-3. `meeting_create` 成功（给出 `meeting_id`）。
-4. 议程草案生成完成（给出议题数）。
-5. 议程用户确认完成并 `agenda_confirm` 成功。
-6. `meeting_start_readiness` 通过（`can_start=true`）。
-7. `meeting_start` 成功（进入进行中）。
-8. 每个议题完成时通知一次（当前议题 -> 下一议题）。
-9. 每次投票完成后通知一次（结果摘要）。
-10. 任务分配完成（任务数与负责人覆盖情况）。
-11. 会后产出完成（summary/actions/export）。
-12. `meeting_end` 成功（会议闭环完成）。
+1. 立即进入会议编排模式，不先走普通闲聊。
+2. 首轮交互先尝试问题卡片；仅当 channel 不支持卡片时改文本。
+3. 未收集完必备输入，禁止 `meeting_create`。
+4. 未执行并成功 `agenda_confirm`，禁止 `meeting_start`。
+5. 未通过 `meeting_start_readiness(can_start=true)`，禁止 `meeting_start`。
+6. 每个阶段成功后都必须发送一次进展通知。
 
-### 标准通知模板
+## 6. 主流程 Quick Start（强制参考）
 
-- 文本模板：`[会议进展] <阶段名称> 已完成 | meeting_id=<ID> | 当前状态=<status> | 下一步=<next_step>`
-- 卡片模板字段：`阶段名称`、`meeting_id`、`当前状态`、`关键结果`、`下一步`
+```pseudo
+1) set interaction_mode = card|text
+2) openclaw agents list（用户终端执行） -> 用户勾选 participants >= 2
+3) 一次性收集必备输入: theme/purpose/type/expected_duration/participants
+4) meeting_create -> 获取 meeting_id
+5) 生成议程草案（4~7项） -> 逐条 agenda_add_item
+6) 向用户展示并修改议程（可 update/remove/reorder）
+7) 用户最终确认后调用 agenda_confirm -> 校验 agenda_confirmed=true
+8) meeting_start_readiness -> 仅当 can_start=true 才 meeting_start
+9) 逐议题循环: speaking_request -> speaking_grant -> recording_take_note -> speaking_release
+10) 如需决策: voting_create -> voting_cast -> voting_get_result -> voting_end
+11) 任务闭环: meeting_assign_task -> meeting_update_task_status -> meeting_record_task_result
+12) 会后收口: output_generate_summary -> output_generate_action_items -> output_export -> meeting_end
+```
 
-### 异常规则
+## 7. 交互模式决策
 
-- 任一阶段失败时，先发“失败通知”，再给“恢复动作”，格式：
-  - `[会议进展] <阶段名称> 失败 | error_code=<code> | 建议动作=<required_action>`
+- `if channel_supports_card == true`：卡片收集与确认。
+- `else`：纯文本收集与确认。
 
-## 交互模式决策（问题卡片优先）
+主 agent 必须在上下文记录：
 
-执行分支：
+- `interaction_mode`: `card` or `text`
+- `interaction_reason`: 使用原因
 
-- `if channel_supports_card == true`：使用问题卡片收集与确认。
-- `else`：使用纯文本问答收集与确认。
-
-无论哪种分支，主 agent 都必须在上下文显式记录：
-
-- `interaction_mode`: `card` 或 `text`
-- `interaction_reason`: 为什么使用当前交互模式
-
-## 调用边界（CLI vs 插件工具，必须遵守）
-
-### CLI only（仅允许 CLI）
-
-- `openclaw agents list`：用于会前查询已配置 Agent 列表。
-
-### Plugin tools only（仅允许插件工具）
-
-以下动作必须调用 `multi-agent-meeting-plugin` 工具，严禁用 CLI 代替：
-
-- 会议生命周期：`meeting_create`、`meeting_start_readiness`、`meeting_start`、`meeting_end`、`meeting_get`、`meeting_list`
-- 议程管理：`agenda_add_item`、`agenda_update_item`、`agenda_remove_item`、`agenda_reorder_items`、`agenda_confirm`、`agenda_list_items`、`agenda_next_item`
-- 发言协调：`speaking_request`、`speaking_grant`、`speaking_release`、`speaking_status`
-- 投票决策：`voting_create`、`voting_cast`、`voting_get_result`、`voting_end`、`voting_override`
-- 会议记录：`recording_take_note`、`recording_tag_insight`、`recording_get_transcript`
-- 会议产出：`output_generate_summary`、`output_generate_action_items`、`output_export`
-- 任务管理：`meeting_assign_task`、`meeting_record_task_result`、`meeting_get_task`、`meeting_list_tasks`、`meeting_update_task_status`
-
-### 禁止项
-
-- 禁止把插件工具误当成 CLI 子命令（例如：`openclaw meeting ...`、`openclaw agenda_confirm ...`）。
-- 禁止在插件工具可用时，绕过插件工具直接编造会议状态或确认结果。
-
-### 失败回退策略
-
-若插件工具调用失败或提示工具不可见：
-
-1. 明确告知“当前是插件工具不可用/未暴露问题”，不要误导成 CLI 问题。
-2. 指引执行检查：`openclaw plugins inspect multi-agent-meeting-plugin`、重启 Gateway、重开会话。
-3. 在工具恢复前，仅允许继续执行 `openclaw agents list` 与纯文本信息收集，不得推进会议状态。
-
-## 首轮响应模板（固定）
-
-命中触发条件后的第一条响应必须使用下列模板之一：
+首轮固定话术：
 
 - 卡片模式：`已进入会议编排模式，我先用问题卡片收集会议输入。`
 - 文本模式：`已进入会议编排模式；当前频道不支持问题卡片，改用纯文本收集输入。`
 
-## 会前 Agent 列表获取（新增强制步骤）
+## 8. 必备输入（一次性收集）
 
-在向用户确认参会人之前，主 agent 必须先查询可用 Agent 清单：
+- `theme`（会议主题）
+- `purpose`（会议目的）
+- `type`（`brainstorm|requirement_review|tech_review|project_kickoff`）
+- `participants`（至少 2 个，`agent_id + role`）
+- `expected_duration`（分钟）
 
-1. 在会前执行 CLI：`openclaw agents list` 获取已配置 Agent 列表。
-2. 获取 `agent_id`、名称、能力标签、在线状态（若有）。
-3. 将可选 Agent 列表展示给用户，让用户勾选本次参会 Agent（至少 2 个）。
-4. 若当前环境无法执行或无法读取 CLI 输出：
-   - 明确告知用户当前无法自动发现 Agent；
-   - 请求用户手动提供参会 Agent 列表；
-   - 未拿到至少 2 个 Agent 前，不允许继续 `meeting_create`。
+### 8.1 问题卡片字段模板
 
-## 必备输入（一次性收集）
+- 会议主题（短文本，必填）
+- 会议目的（多行文本，必填）
+- 会议类型（单选，必填）
+- 参会 Agent（多选，>=2，来源于 `openclaw agents list`）
+- 预计时长（数字，分钟，默认 60）
 
-1. 会议主题（`theme`）
-2. 会议目的（`purpose`）
-3. 会议类型（`type`）：
-   - `brainstorm`
-   - `requirement_review`
-   - `tech_review`
-   - `project_kickoff`
-4. 参会 Agent 列表（至少 2 个，结构：`agent_id + role`）
-5. 预计时长（`expected_duration`，分钟）
+### 8.2 纯文本问句模板
 
-## 生命周期状态机（强约束）
+请按顺序确认：
+1. 本次会议主题是什么？
+2. 会议希望达成什么目标？
+3. 会议类型是：头脑风暴/需求评审/技术评审/项目启动？
+4. 参会 Agent 列表（至少2个，给出 `agent_id + role`）？
+5. 预计时长多少分钟？
 
-`DRAFT -> CREATED -> AGENDA_DRAFTED -> AGENDA_CONFIRMED -> STARTED/IN_PROGRESS -> AGENDA_LOOP -> WRAP_UP -> ENDED`
+## 9. 生命周期与门禁
 
-### 状态门禁
+概念状态机：
 
-- `CREATED` 阶段先生成议程草案，再进入用户确认。
-- 只有 `AGENDA_CONFIRMED` 才能 `meeting_start`。
-- `started`/`in_progress` 才能分配任务、推进议程、投票。
-- `ended` 后禁止再写入讨论动作（仅允许查询与导出既有结果）。
+`DRAFT -> CREATED -> AGENDA_CONFIRMED -> IN_PROGRESS -> WRAP_UP -> ENDED`
 
-## 工具编排主流程
+说明：
 
-### 0) 会前准备（允许同主题多次开会）
+- 上述是概念流程态；实际字段以 `meeting_get` 返回为准（如 `created|in_progress|ended`）。
+- 任何阶段推进都以插件工具返回值为准，不靠推测。
 
-- 不做“同主题防重复开会”拦截。
-- 允许同主题会议多次创建，通过 `meeting_id` 天然区分不同会议实例。
-- 如需更强可读性，可在主题后追加序号（例如：`支付重构评审-第2次`）。
-- 先执行 `openclaw agents list` -> 用户勾选参会人，再进入会议创建。
+强门禁：
 
-### 1) 创建会议
+- 未完成必备输入：禁止 `meeting_create`
+- 未 `agenda_confirm`：禁止 `meeting_start`
+- `meeting_start_readiness.can_start != true`：禁止 `meeting_start`
+- `status=ended` 后禁止继续会议写入动作（仅允许查询/导出）
 
-调用 `meeting_create`，必须传：
+### 9.1 confirm 失效规则（必须重确认）
+
+若执行过以下任一工具，确认立即失效，必须再次 `agenda_confirm`：
+
+- `agenda_add_item`
+- `agenda_update_item`
+- `agenda_remove_item`
+- `agenda_reorder_items`
+
+## 10. 阶段进展通知规范（强制）
+
+每个阶段成功都必须通知，至少覆盖：
+
+1. Agent 列表获取完成
+2. 必备输入收集完成
+3. `meeting_create` 成功（附 `meeting_id`）
+4. 议程草案完成（附议题数）
+5. `agenda_confirm` 成功
+6. readiness 通过
+7. `meeting_start` 成功
+8. 每个议题完成
+9. 每次投票完成
+10. 任务分配完成
+11. 会后产出完成
+12. `meeting_end` 成功
+
+标准模板：
+
+`[会议进展] <阶段> 已完成 | meeting_id=<ID> | status=<status> | next=<next_step>`
+
+失败模板：
+
+`[会议进展] <阶段> 失败 | error_code=<code> | 建议动作=<required_action>`
+
+## 11. 工具编排主流程（详细）
+
+### 11.1 会前选人
+
+- 人类在终端执行：`openclaw agents list`
+- 主 agent 向用户展示可选 Agent，要求勾选 >=2。
+- 无法获取列表时，要求用户手动提供参会 Agent。
+
+### 11.2 创建会议
+
+调用 `meeting_create`，参数必须完整：
 
 - `theme`
 - `purpose`
@@ -170,424 +176,138 @@ description: 多agent会议控制。组织多场景多agent会议，包括头脑
 - `expected_duration`
 - `participants`
 
-记录返回 `meeting_id`。
+记录 `meeting_id`。
 
-### 2) 初始化议程
+### 11.3 议程生成与确认
 
-根据会议类型生成 4\~7 个议程项，逐条调用 `agenda_add_item`：
+- 生成 4~7 个议程项，逐条 `agenda_add_item`
+- 展示给用户确认，可 `agenda_update_item / agenda_remove_item / agenda_reorder_items`
+- 用户明确确认开始后，调用 `agenda_confirm`
+- 校验返回 `agenda_confirmed=true`
 
-- 必填：`meeting_id`、`title`、`expected_duration`
-- 建议填：`description`、`time_limit`、`materials`
+### 11.4 启动会议
 
-### 2.1) 用户确认议程（新增强制环节）
+- 调用 `meeting_start_readiness`
+- 仅当 `can_start=true` 调用 `meeting_start`
 
-- 主 agent 必须把议程草案展示给用户确认。
-- 用户可执行以下修改指令：
-  - 调整议题顺序
-  - 增删议题
-  - 修改单个议题时长与描述
-- 每次修改后，主 agent 重新展示最新议程，直到用户明确回复“确认开始”。
+### 11.5 议程循环
 
-### 2.2) agenda confirm 调用规范（强制）
+每个议题执行：
 
-- 触发时机：在“最后一次议程变更”之后、`meeting_start` 之前，必须调用 `agenda_confirm`。
-- 调用工具：`agenda_confirm`（参数：`meeting_id`）。
-- 启动前校验：主 agent 必须检查 `agenda_confirm` 返回里 `agenda_confirmed=true`，否则禁止调用 `meeting_start`。
-- 启动动作：仅在确认成功后先调用 `meeting_start_readiness`，`can_start=true` 时再调用 `meeting_start`。
+1. `meeting_get` 读取当前议题
+2. `speaking_request`（申请）
+3. `speaking_grant`（授予）
+4. `recording_take_note`（记录）
+5. `speaking_release`（释放）
+6. `agenda_next_item`（推进）
 
-### 2.3) confirm 失效规则（必须重确认）
+### 11.6 投票子流程（按需）
 
-以下任一工具调用后，都会使议程确认失效，必须再次执行 `agenda_confirm`：
+- `voting_create`
+- 全员 `voting_cast`
+- `voting_get_result`
+- `voting_end`
+- 若平票/无共识：
+  - 最多再讨论+重投 1 次
+  - 仍无共识则请求用户裁决，必要时 `voting_override`
 
-- `agenda_add_item`
-- `agenda_update_item`
-- `agenda_remove_item`
-- `agenda_reorder_items`
+### 11.7 任务闭环
 
-确认后调用 `meeting_start` 启动会议（若中间无议程变更）。
+- `meeting_assign_task`
+- `meeting_update_task_status`
+- `meeting_record_task_result`
+- 会末 `meeting_list_tasks` 输出完成率
 
-### 3) 议程循环（每个议题都执行）
+### 11.8 会后收口
 
-1. 调用 `meeting_get` 获取 `current_agenda_index` 与议程状态。
-2. 在当前议题做“发言编排”：
-   - 参会 Agent 先 `speaking_request`
-   - 主持按优先级 `speaking_grant`
-   - 发言结束 `speaking_release`
-3. 每次发言后立刻 `recording_take_note`（必须写入 `agenda_item_id`）。
-4. 需要决策时进入投票子流程（见下一节）。
-5. 议题收束后调用 `agenda_next_item` 推进下一项。
-6. 若 `agenda_next_item` 返回“已是最后一项”，退出议程循环。
+- `output_generate_summary`
+- `output_generate_action_items`
+- `output_export`（建议 markdown）
+- `meeting_end`
 
-### 4) 投票子流程（按需）
+## 12. 四类会议场景策略
 
-1. `voting_create`
-   - 必填：`meeting_id`、`topic`、`options`、`type`、`window_type`
-   - 可选：`agenda_item_id`、`description`
-2. 全员投票：逐个调用 `voting_cast`（`option_id` 必须来自创建返回的选项 ID）。
-3. 读结果：`voting_get_result`
-4. 关投票：`voting_end`
-5. 若平票/无共识：
-   - 先追加一轮短讨论 + 再投一次（最多 1 次）
-   - 仍无共识则请求用户裁决，必要时调用 `voting_override`
+> 使用说明：主 agent 在议程生成前，应将对应场景的议程建议作为 constraints 输入。
 
-### 5) 任务闭环（必须执行）
+### 12.1 brainstorm
 
-至少创建一批可执行任务：
+- 议程建议：问题定义 -> 发散创意 -> 聚类 -> 投票 -> 落地
+- 投票建议：`simple + simple`
+- 产出重点：Top 点子、试点方案、负责人
 
-1. `meeting_assign_task`：把任务分配给非主持 Agent。
-2. 执行中可用 `meeting_update_task_status` 标记 `in_progress`。
-3. 收到结果后 `meeting_record_task_result`。
-4. 会末调用 `meeting_list_tasks` 统计完成率。
+### 12.2 requirement_review
 
-### 6) 会后产出与结束
-
-按顺序调用：
-
-1. `output_generate_summary`
-2. `output_generate_action_items`
-3. `output_export`（建议 `format: "markdown"`，`content: ["summary","transcript","actions"]`）
-4. `meeting_end`
-
-## 四类场景模板（核心差异）
-
-## A. 头脑风暴（`brainstorm`）
-
-- 议程建议：
-  - 问题定义
-  - 发散创意
-  - 创意聚类
-  - 优先级投票
-  - 行动落地
-- 投票策略：`type: "simple"` + `window_type: "simple"`
-- 产出重点：Top 想法、试点方案、责任分工
-
-## B. 需求评审（`requirement_review`）
-
-- 议程建议：
-  - 背景与目标
-  - 需求逐条评审
-  - 风险与边界
-  - 范围确认投票
-  - 里程碑与负责人
-- 投票策略：`type: "yes_no_abstain"` + `window_type: "moderate"`
+- 议程建议：背景目标 -> 逐条评审 -> 风险边界 -> 范围确认 -> 里程碑
+- 投票建议：`yes_no_abstain + moderate`
 - 产出重点：通过/退回条目、变更清单、验收口径
 
-## C. 技术评审（`tech_review`）
+### 12.3 tech_review
 
-- 议程建议：
-  - 候选方案陈述
-  - 成本/性能/风险对比
-  - 关键争议点讨论
-  - 方案决策投票
-  - 实施与回滚计划
-- 投票策略：`type: "ranked"` + `window_type: "complex"`
-- 产出重点：最终方案、技术债、实施分工与时间窗
+- 议程建议：方案陈述 -> 对比评估 -> 争议点 -> 决策投票 -> 实施/回滚
+- 投票建议：`ranked + complex`
+- 产出重点：最终方案、技术债、执行计划
 
-## D. 项目启动（`project_kickoff`）
+### 12.4 project_kickoff
 
-- 议程建议：
-  - 目标与范围
-  - 角色与协作机制
-  - 里程碑与依赖
-  - 风险预案
-  - 启动确认投票
-- 投票策略：`type: "yes_no_abstain"` + `window_type: "simple"`
+- 议程建议：目标范围 -> 角色协作 -> 里程碑依赖 -> 风险预案 -> 启动确认
+- 投票建议：`yes_no_abstain + simple`
 - 产出重点：RACI、里程碑、风险台账、首周任务
 
-## 异常分支与恢复策略
+## 13. 典型错误与回退分支
 
-### 1) Agent 无响应
+### 13.1 工具不可见/未加载
 
-- 单个 Agent 超时：记录笔记并继续下一位，不阻塞全局。
-- 连续两轮无响应：标记该 Agent 仅观察模式，后续仍可被重新拉回。
+典型信号：`TOOL_NOT_AVAILABLE` / 工具列表缺失。
 
-### 2) 发言拥塞
+处理：
 
-- 使用 `speaking_status` 查看队列；同议题每位 Agent 最多连续 1 次发言。
+1. 停止推进会议状态。
+2. 提示检查：`openclaw plugins inspect multi-agent-meeting-plugin`
+3. 检查 `pgDsn/PG_DSN` 与数据库连通性。
+4. 重启 Gateway 并重开会话。
 
-### 3) 投票失效
+### 13.2 议程未确认
 
-- 若 `voting_cast` 出现非法选项，立即重读 `voting_get_result` 并提示合法 `option_id` 重投。
+典型信号：`AGENDA_NOT_CONFIRMED` 或 message 包含 `Agenda must be confirmed`。
 
-### 4) 进程中断恢复
+处理：
 
-恢复步骤固定：
+1. 回到议程确认步骤。
+2. 若中间改过议程，必须重新 `agenda_confirm`。
+3. 再次执行 readiness，再尝试 start。
 
-1. `meeting_list` 查 `in_progress`
-2. `meeting_get` 读取当前议程索引
-3. `recording_get_transcript` 拉取最近记录
-4. 从当前议题继续，不重建会议
+### 13.3 数据库不可用
 
-## 结束判定（收敛条件）
+典型信号：连接失败/鉴权失败/超时。
 
-只有满足全部条件才可结束会议：
+处理：
 
-1. 议程已全部处理（或用户明确提前结束）。
-2. 至少生成一次总结（`output_generate_summary` 成功）。
-3. 已提取行动项（`output_generate_action_items` 成功）。
-4. 任务列表已统计（`meeting_list_tasks` 已调用）。
+1. 明确提示主存储不可用，暂停流程推进。
+2. 检查 `pgDsn/PG_DSN`。
+3. 检查 PostgreSQL 实例可用性和网络连通性。
+4. 恢复后从 `meeting_list` + `meeting_get` 续跑。
 
-## 输出给用户的最终结构
+### 13.4 LLM JSON 输出失败
 
-会后回复必须包含：
+处理：
 
-1. 会议基本信息（`meeting_id`、主题、类型、时长）
-2. 核心结论（决策点）
-3. 行动项（负责人、状态）
-4. 导出文件路径（来自 `output_export`）
-5. 未决事项与建议下一步
+1. 同节点重试 1 次，明确只输出 JSON。
+2. 再失败则进入最小安全动作：
+   - 不执行关键写操作
+   - 向用户索取最小必要信息
+   - 等用户确认后再继续
 
-## 执行约束
+## 14. 会后最终回复结构（必须包含）
+
+- 会议信息：`meeting_id`、主题、类型、时长
+- 核心结论：决策点
+- 行动项：负责人、状态
+- 导出路径：`output_export` 返回路径
+- 未决事项与下一步建议
+
+## 15. 执行约束
 
 - 严禁使用不存在的工具名或字段名。
-- 工具参数必须与插件实际 schema 一致。
-- 未确认关键信息时先提问，不得臆造会议输入或投票结果。
-
-## LLM 介入策略（已对齐）
-
-### 介入范围
-
-- 标准介入：议程生成、发言结构化、决策建议、任务拆解、会后总结。
-- Prompt 组织：分节点模板。
-- 输出格式：强约束 JSON。
-- 决策边界：LLM 仅给建议，关键决策必须用户确认。
-
-### 关键确认门
-
-- 门1（会前）：会议合同确认（目标/范围/参与者/时长/产出）。
-- 门1.5（会前）：议程草案确认与可修改（顺序/增删/时长/描述）。
-- 门2（会中）：平票、无共识、重大取舍时请求用户裁决。
-- 门3（会后）：最终产出确认后再发布执行。
-
-### 节点0：参会 Agent 候选生成模板（先查再选）
-
-```text
-[系统角色]
-你是会前编排助手。你将基于“可用 Agent 列表查询结果”为用户生成参会候选建议，仅输出 JSON。
-
-[输入]
-{
-  "agent_list_source":"openclaw agents list",
-  "available_agents":[
-    {
-      "agent_id":"string",
-      "name":"string",
-      "capabilities":["string"],
-      "status":"online|offline|busy|unknown"
-    }
-  ],
-  "meeting_intent":{
-    "theme":"string",
-    "purpose":"string",
-    "type":"brainstorm|requirement_review|tech_review|project_kickoff"
-  }
-}
-
-[输出JSON Schema]
-{
-  "recommended_participants":[
-    {
-      "agent_id":"string",
-      "suggested_role":"host|participant|observer",
-      "reason":"string"
-    }
-  ],
-  "must_have_roles":["host","participant"],
-  "need_user_confirmation": true,
-  "confirmation_message":"string"
-}
-
-[硬约束]
-- 参会建议至少 2 个 Agent。
-- 只可使用 available_agents 中存在的 agent_id。
-- 本节点只给“候选建议”，最终名单必须由用户确认。
-```
-
-### 节点1：议程生成模板
-
-```text
-[系统角色]
-你是会议编排助手。请基于输入生成“会议议程草案”，仅输出 JSON。
-
-[输入]
-{
-  "meeting": {
-    "theme": "...",
-    "purpose": "...",
-    "type": "brainstorm|requirement_review|tech_review|project_kickoff",
-    "expected_duration": 60,
-    "participants": [{"agent_id":"a1","role":"participant"}]
-  },
-  "user_instruction": "...",
-  "constraints": ["议程项4-7个","每项时长>=1分钟","总时长尽量不超 expected_duration"]
-}
-
-[输出JSON Schema]
-{
-  "agenda_items":[
-    {
-      "title":"string",
-      "description":"string",
-      "expected_duration": number,
-      "time_limit": number|null,
-      "materials":["string"],
-      "rationale":"string"
-    }
-  ],
-  "risks":["string"],
-  "need_user_confirmation": boolean,
-  "confirmation_questions":["string"]
-}
-
-[硬约束]
-- 只输出合法 JSON。
-- expected_duration 必须为正整数。
-- 信息不足时 need_user_confirmation=true 并给出问题。
-```
-
-### 节点2：发言结构化模板
-
-```text
-[系统角色]
-你是会议记录结构化助手。将发言归类并提炼关键信息，仅输出 JSON。
-
-[输入]
-{
-  "meeting_id":"...",
-  "agenda_item_id":"...",
-  "messages":[{"agent_id":"a1","raw_content":"...","timestamp":"..."}],
-  "current_topic":"..."
-}
-
-[输出JSON Schema]
-{
-  "notes":[
-    {
-      "agent_id":"string",
-      "raw_content":"string",
-      "message_type":"statement|question|vote|insight|action",
-      "confidence": number,
-      "insight_tags":["risk|opportunity|decision|action"]
-    }
-  ],
-  "summary_points":["string"],
-  "open_questions":["string"]
-}
-
-[硬约束]
-- 只输出 JSON。
-- confidence 范围 0~1。
-- 不得补充未出现事实。
-```
-
-### 节点3：决策建议与投票设计模板
-
-```text
-[系统角色]
-你是会议决策顾问。根据讨论上下文给出决策路径建议，仅输出 JSON。
-
-[输入]
-{
-  "agenda_context": "...",
-  "discussion_summary":["..."],
-  "candidate_options":["..."],
-  "participants":["a1","a2","a3"]
-}
-
-[输出JSON Schema]
-{
-  "decision_required": boolean,
-  "recommended_path":"continue_discussion|start_voting|escalate_user",
-  "voting_plan":{
-    "topic":"string",
-    "type":"simple|ranked|yes_no_abstain",
-    "window_type":"simple|moderate|complex",
-    "options":["string"]
-  },
-  "reasoning":["string"],
-  "need_user_confirmation": boolean,
-  "confirmation_message":"string"
-}
-
-[硬约束]
-- 关键决策默认 need_user_confirmation=true。
-- recommended_path=start_voting 时 options 不能为空。
-```
-
-### 节点4：任务拆解模板
-
-```text
-[系统角色]
-你是任务编排助手。基于议题结论生成任务建议，仅输出 JSON。
-
-[输入]
-{
-  "meeting_id":"...",
-  "agenda_item_id":"...",
-  "decisions":["..."],
-  "participants":[{"agent_id":"a1","role":"participant"}],
-  "constraints":{"max_tasks":8}
-}
-
-[输出JSON Schema]
-{
-  "task_suggestions":[
-    {
-      "assignee_agent_id":"string",
-      "title":"string",
-      "description":"string",
-      "output_format":"markdown|json|text|structured",
-      "priority": number,
-      "timeout_seconds": number|null,
-      "reason":"string"
-    }
-  ],
-  "coverage_check":{
-    "uncovered_decisions":["string"],
-    "duplications":["string"]
-  },
-  "need_user_confirmation": boolean
-}
-
-[硬约束]
-- assignee_agent_id 必须来自 participants。
-- priority 范围 1~10。
-```
-
-### 节点5：会后总结模板
-
-```text
-[系统角色]
-你是会后交付助手。将会议结果整理成可提交版本，仅输出 JSON。
-
-[输入]
-{
-  "meeting_info":{"meeting_id":"...","theme":"...","type":"..."},
-  "agenda_summaries":["..."],
-  "voting_results":["..."],
-  "tasks":["..."]
-}
-
-[输出JSON Schema]
-{
-  "final_summary":"string",
-  "key_decisions":["string"],
-  "action_items":[
-    {"item":"string","owner":"string|null","status":"pending|in_progress|completed|failed"}
-  ],
-  "risks":["string"],
-  "next_steps":["string"],
-  "need_user_confirmation": true,
-  "confirmation_message":"string"
-}
-
-[硬约束]
-- 关键交付前 need_user_confirmation 必须为 true。
-- 不得编造未发生的投票与任务结果。
-```
-
-### 通用回退策略
-
-- JSON 解析失败：同模板重试 1 次（低温、强调“只输出 JSON”）。
-- 再失败：进入最小安全动作，不执行关键写操作。
-- 最小安全动作：记录失败原因 -> 向用户索取最小必要信息 -> 等待确认。
+- 工具参数必须与插件 schema 一致。
+- 信息未确认时先提问，不得臆造输入/投票/结果。
+- 关键决策（平票、无共识、重大取舍）必须用户确认。
