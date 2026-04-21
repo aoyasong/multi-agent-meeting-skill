@@ -1,5 +1,5 @@
 ﻿---
-name: multi-system-meeting-orchestrator
+name: multi-agent-meeting-skill
 description: 多agent会议控制Skill。命中开会/头脑风暴/评审/项目启动意图时立即触发，按强约束流程编排会议。主数据使用PostgreSQL，导出文件使用storageDir。
 ---
 
@@ -100,6 +100,7 @@ description: 多agent会议控制Skill。命中开会/头脑风暴/评审/项目
 ### 8.2 纯文本问句模板
 
 请按顺序确认：
+
 1. 本次会议主题是什么？
 2. 会议希望达成什么目标？
 3. 会议类型是：头脑风暴/需求评审/技术评审/项目启动？
