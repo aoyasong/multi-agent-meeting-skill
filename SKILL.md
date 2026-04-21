@@ -1,4 +1,4 @@
----
+﻿---
 name: multi-agent-meeting-skill
 description: 多agent会议控制Skill。命中开会/头脑风暴/评审/项目启动意图时立即触发，按强约束流程编排会议。主数据使用PostgreSQL，导出文件使用storageDir。
 ---
@@ -7,7 +7,7 @@ description: 多agent会议控制Skill。命中开会/头脑风暴/评审/项目
 
 ## 1. 目标
 
-在 OpenClaw 中基于插件 `multi-agent-meeting-plugin` 编排一次多 Agent 会议，保证：
+在 OpenClaw 中基于插件 `multi-agent-meeting` 编排一次多 Agent 会议，保证：
 
 - 流程可执行：创建 -> 议程 -> 确认 -> 启动 -> 讨论/投票 -> 任务 -> 产出 -> 结束。
 - 约束可落地：工具边界清晰、门禁明确、异常可恢复。
@@ -263,7 +263,7 @@ description: 多agent会议控制Skill。命中开会/头脑风暴/评审/项目
 处理：
 
 1. 停止推进会议状态。
-2. 提示检查：`openclaw plugins inspect multi-agent-meeting-plugin`
+2. 提示检查：`openclaw plugins inspect multi-agent-meeting`
 3. 检查 `pgDsn/PG_DSN` 与数据库连通性。
 4. 重启 Gateway 并重开会话。
 
