@@ -1,4 +1,4 @@
-﻿---
+---
 name: multi-agent-meeting-skill
 description: 多agent会议控制Skill。命中开会/头脑风暴/评审/项目启动意图时立即触发，按强约束流程编排会议。主数据使用PostgreSQL，导出文件使用storageDir。
 ---
